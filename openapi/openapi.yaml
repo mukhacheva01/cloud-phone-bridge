@@ -1,80 +1,91 @@
 openapi: 3.1.0
 info:
   title: Cloud Phone Bridge API
-  version: 0.1.0
-  description: Unified control API for cloud Android phone providers.
+  version: 0.2.0
+  description: Async control API for cloud Android phone providers.
 servers:
-  - url: https://bridge.example.com/v1
+  - url: http://localhost:8000/v1
 security:
   - bearerAuth: []
+tags:
+  - name: Phones
+  - name: Jobs
 paths:
-  /phones/batch-start:
-    post:
-      summary: Start multiple phones asynchronously
-      operationId: batchStartPhones
+  /phones:
+    get:
+      tags: [Phones]
+      summary: List phones
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PhoneIdsRequest'
-      responses:
-        '202':
-          description: Job accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JobAccepted'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-  /phones/batch-stop:
-    post:
-      summary: Stop multiple phones asynchronously
-      operationId: batchStopPhones
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PhoneIdsRequest'
-      responses:
-        '202':
-          description: Job accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JobAccepted'
-  /phones/connection-info:
-    post:
-      summary: Get connection information for phones
-      operationId: getPhoneConnectionInfo
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PhoneIdsRequest'
+        - name: status_filter
+          in: query
+          schema: { type: string, enum: [stopped, running] }
       responses:
         '200':
-          description: Connection information
+          description: Phone inventory
           content:
             application/json:
               schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/ConnectionInfo'
+                type: array
+                items: { $ref: '#/components/schemas/Phone' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /phones/batch-start:
+    post:
+      tags: [Phones]
+      summary: Queue a batch start operation
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PhoneIdsRequest' }
+      responses:
+        '202':
+          description: Job queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /phones/batch-stop:
+    post:
+      tags: [Phones]
+      summary: Queue a batch stop operation
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PhoneIdsRequest' }
+      responses:
+        '202':
+          description: Job queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /phones/connection-info:
+    post:
+      tags: [Phones]
+      summary: Get connection information
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PhoneIdsRequest' }
+      responses:
+        '200':
+          description: Connection information envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConnectionInfoResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
   /jobs/{job_id}:
     get:
-      summary: Get aggregate and per-phone job status
-      operationId: getJob
+      tags: [Jobs]
+      summary: Get job aggregate and per-phone results
       parameters:
         - name: job_id
           in: path
@@ -82,32 +93,30 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         '200':
-          description: Job state
+          description: Job status
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/Job'
-        '404':
-          description: Job not found
+              schema: { $ref: '#/components/schemas/Job' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Job not found }
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: JWT
+      bearerFormat: token
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
       in: header
       required: true
-      schema:
-        type: string
-        minLength: 8
-        maxLength: 128
+      description: Same key and same logical request return the original job.
+      schema: { type: string, minLength: 8, maxLength: 128 }
   schemas:
     PhoneIdsRequest:
       type: object
       required: [phone_ids]
+      additionalProperties: false
       properties:
         phone_ids:
           type: array
@@ -121,17 +130,30 @@ components:
       properties:
         job_id: { type: string, format: uuid }
         status: { type: string, const: queued }
+    Phone:
+      type: object
+      required: [phone_id, vendor, vendor_id, status, adb_status, tags, updated_at]
+      properties:
+        phone_id: { type: string, format: uuid }
+        vendor: { type: string }
+        vendor_id: { type: string }
+        status: { type: string, enum: [stopped, running] }
+        adb_status: { type: string, enum: [offline, online] }
+        tags: { type: array, items: { type: string } }
+        updated_at: { type: string, format: date-time }
     Job:
       type: object
-      required: [job_id, operation, status, summary, items]
+      required: [job_id, operation, status, created_at, updated_at, attempts, summary, items]
       properties:
         job_id: { type: string, format: uuid }
-        operation: { type: string }
-        status:
-          type: string
-          enum: [queued, running, partially_succeeded, succeeded, failed, cancelled]
+        operation: { type: string, enum: [start, stop] }
+        status: { type: string, enum: [queued, running, partially_succeeded, succeeded, failed, cancelled] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        attempts: { type: integer, minimum: 0 }
         summary:
           type: object
+          required: [total, succeeded, failed, pending]
           properties:
             total: { type: integer }
             succeeded: { type: integer }
@@ -139,37 +161,49 @@ components:
             pending: { type: integer }
         items:
           type: array
-          items:
-            $ref: '#/components/schemas/JobItem'
+          items: { $ref: '#/components/schemas/JobItem' }
     JobItem:
       type: object
-      required: [phone_id, status]
+      required: [phone_id, status, attempts]
       properties:
         phone_id: { type: string, format: uuid }
-        status:
-          type: string
-          enum: [queued, running, succeeded, failed]
-        error:
-          $ref: '#/components/schemas/Error'
+        status: { type: string, enum: [queued, running, succeeded, failed] }
+        attempts: { type: integer, minimum: 0 }
+        error: { $ref: '#/components/schemas/Error' }
+    Error:
+      type: object
+      required: [code, message, retryable]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        retryable: { type: boolean }
+        vendor_code: { type: string, nullable: true }
+    ConnectionInfoResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ConnectionInfo' }
     ConnectionInfo:
       type: object
-      required: [phone_id, access_host, access_port, expires_at]
+      required: [phone_id, access_host, access_port, ticket, expires_at, adb_mode, network_mode]
       properties:
         phone_id: { type: string, format: uuid }
         access_host: { type: string }
         access_port: { type: integer, minimum: 1, maximum: 65535 }
         ticket: { type: string, writeOnly: true }
         expires_at: { type: string, format: date-time }
-    Error:
-      type: object
-      properties:
-        code: { type: string }
-        message: { type: string }
-        retryable: { type: boolean }
+        adb_mode: { type: string, enum: [mock, one_click, vpc, internet] }
+        network_mode: { type: string, enum: [local, vpc, internet] }
   responses:
     BadRequest:
       description: Invalid request
       content:
         application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }

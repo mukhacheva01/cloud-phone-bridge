@@ -19,7 +19,39 @@ class PhoneIdsRequest(BaseModel):
 
 class JobAccepted(BaseModel):
     job_id: UUID
-    status: JobStatus = JobStatus.queued
+    status: JobStatus
+
+
+class ErrorInfo(BaseModel):
+    code: str
+    message: str
+    retryable: bool = False
+    vendor_code: str | None = None
+
+
+class JobItem(BaseModel):
+    phone_id: UUID
+    status: str
+    attempts: int = 0
+    error: ErrorInfo | None = None
+
+
+class JobSummary(BaseModel):
+    total: int
+    succeeded: int
+    failed: int
+    pending: int
+
+
+class JobResponse(BaseModel):
+    job_id: UUID
+    operation: str
+    status: JobStatus
+    created_at: str
+    updated_at: str
+    attempts: int
+    summary: JobSummary
+    items: list[JobItem]
 
 
 class Phone(BaseModel):
@@ -32,13 +64,15 @@ class Phone(BaseModel):
     updated_at: str
 
 
-class ConnectionInfoRequest(PhoneIdsRequest):
-    pass
-
-
 class ConnectionInfo(BaseModel):
     phone_id: UUID
     access_host: str
     access_port: int
     ticket: str
     expires_at: str
+    adb_mode: str = "mock"
+    network_mode: str = "local"
+
+
+class ConnectionInfoResponse(BaseModel):
+    items: list[ConnectionInfo]

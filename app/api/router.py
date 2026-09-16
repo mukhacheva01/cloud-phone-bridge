@@ -3,7 +3,9 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException, status
 
 from app.adapters.mock import mock_adapter
+from app.audit import list_events, record_event
 from app.config import get_settings
+from app.control import retry_job
 from app.schemas import ConnectionInfoResponse, JobAccepted, JobResponse, Phone, PhoneIdsRequest
 from app.store import store
 from app.worker import enqueue_phone_operation
@@ -12,20 +14,22 @@ api_router = APIRouter()
 settings = get_settings()
 
 
-def require_auth(authorization: str | None) -> None:
+def require_auth(authorization: str | None) -> str:
     expected = f"Bearer {settings.api_bearer_token}"
     if settings.app_env == "development" and settings.api_bearer_token == "change-me":
-        return
+        return "dev"
     if authorization != expected:
         raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED", "message": "Invalid bearer token"})
+    return "token-user"
 
 
 def submit_job(operation: str, payload: PhoneIdsRequest, key: str, authorization: str | None) -> JobAccepted:
-    require_auth(authorization)
+    actor = require_auth(authorization)
     missing = [phone_id for phone_id in payload.phone_ids if not store.get_phone(phone_id)]
     if missing:
         raise HTTPException(status_code=400, detail={"code": "UNKNOWN_PHONE", "phone_ids": [str(x) for x in missing]})
     job = store.create_job(operation, payload.phone_ids, key)
+    record_event(f"job.{operation}", actor, "job", job["job_id"], {"count": len(payload.phone_ids)})
     enqueue_phone_operation(UUID(job["job_id"]))
     return JobAccepted(job_id=UUID(job["job_id"]), status="queued")
 
@@ -71,3 +75,33 @@ async def get_job(job_id: UUID, authorization: str | None = Header(default=None)
     items = job["items"]
     summary = {"total": len(items), "succeeded": sum(x["status"] == "succeeded" for x in items), "failed": sum(x["status"] == "failed" for x in items), "pending": sum(x["status"] in ("queued", "running") for x in items)}
     return JobResponse(**job, summary=summary)
+
+
+@api_router.post("/jobs/{job_id}/retry", response_model=JobAccepted, status_code=status.HTTP_202_ACCEPTED)
+async def retry(job_id: UUID, authorization: str | None = Header(default=None)) -> JobAccepted:
+    actor = require_auth(authorization)
+    try:
+        job = retry_job(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Job not found"})
+    record_event("job.retry", actor, "job", job_id)
+    enqueue_phone_operation(job_id)
+    return JobAccepted(job_id=job_id, status="queued")
+
+
+@api_router.post("/jobs/{job_id}/cancel", status_code=status.HTTP_202_ACCEPTED)
+async def cancel(job_id: UUID, authorization: str | None = Header(default=None)) -> dict[str, str]:
+    actor = require_auth(authorization)
+    job = store.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Job not found"})
+    job["status"] = "cancelled"
+    store.save_job(job)
+    record_event("job.cancel", actor, "job", job_id)
+    return {"job_id": str(job_id), "status": "cancelled"}
+
+
+@api_router.get("/audit", response_model=list[dict])
+async def audit(limit: int = 50, authorization: str | None = Header(default=None)) -> list[dict]:
+    require_auth(authorization)
+    return list_events(limit)

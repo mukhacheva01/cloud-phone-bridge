@@ -1,59 +1,18 @@
 # Cloud Phone Bridge
 
-Control Layer для централизованного управления пулом из 100+ облачных Android-телефонов через единый API.
+MVP Control Layer для тестирования управления 100 виртуальными Android-телефонами без подключения Alibaba Cloud.
 
-## Цели
+## Что уже работает
 
-- скрыть различия API провайдеров за единым контрактом;
-- выполнять массовые операции асинхронно и с учетом лимитов;
-- хранить нормализованное состояние устройств;
-- выдавать connection info для Appium, ADB и внешних RPA-систем;
-- управлять жизненным циклом устройств, приложениями, группами и тегами.
-
-## Не входит в ответственность сервиса
-
-Bridge не реализует бизнес-сценарии внутри Android-приложений. Нажатия, ввод текста и UI-тесты выполняются внешними клиентами через Appium/ADB. Bridge отвечает за доступ к устройству, выполнение низкоуровневых команд и контроль сессий.
-
-## Архитектура
-
-```text
-Clients / RPA / Admin UI
-          |
-      API Gateway
-          |
-   Orchestrator + Queue
-      /      |       \
-Vendor A  Vendor B  ADB Manager
- Adapters    Adapters     |
-          State Storage
-```
-
-Основные компоненты:
-
-1. **API Gateway**: аутентификация, валидация, idempotency key, маршрутизация.
-2. **Orchestrator**: fan-out, chunking, очереди, retry/backoff, агрегация результатов.
-3. **Vendor Adapters**: единый интерфейс для Multilogin, Huawei, Alibaba и будущих провайдеров.
-4. **State Storage**: устройства, группы, теги, задания, попытки, подключения и аудит.
-5. **ADB Manager**: ограниченные по времени ADB-сессии, install/push/command, очистка соединений.
-
-## Документация
-
-- [Технические требования](docs/requirements.md)
-- [Архитектура](docs/architecture.md)
-- [OpenAPI-контракт](openapi/openapi.yaml)
-
-## Ключевые решения
-
-- массовые операции возвращают `202 Accepted` и `job_id`;
-- результат отслеживается через `/jobs/{job_id}`;
-- каждый элемент batch имеет собственный статус и ошибку;
-- повтор запроса с тем же `Idempotency-Key` не создает новую операцию;
-- лимиты, размер чанков и retry policy задаются отдельно для каждого провайдера;
-- токены и tickets не пишутся в открытые логи и хранятся зашифрованно.
-
-## Статус
-
-Проект находится на этапе спецификации. Следующий шаг: выбрать стек, провайдеров первой версии и зафиксировать реальные ограничения их API.
+- 100 предсозданных mock-телефонов;
+- batch start/stop до 100 устройств;
+- idempotency через `Idempotency-Key`;
+- статусы телефонов `stopped/running` и `offline/online`;
+- job status с результатом по каждому телефону;
+- connection info с mock ADB endpoint;
+- FastAPI Swagger UI;
+- Docker Compose: API, worker, PostgreSQL и Redis;
+- интерфейс `VendorAdapter`, который позже заменит `MockAdapter` на `AlibabaAdapter`.
 
 ## Локальный запуск
 
@@ -62,4 +21,23 @@ cp .env.example .env
 docker compose up --build
 ```
 
-После запуска: API `http://localhost:8000`, Swagger UI `http://localhost:8000/docs`, healthcheck `http://localhost:8000/health`. Стек каркаса: FastAPI, PostgreSQL 16, Redis 7 и Celery worker.
+API: `http://localhost:8000`  
+Swagger: `http://localhost:8000/docs`  
+Healthcheck: `http://localhost:8000/health`
+
+## Быстрый сценарий через Swagger
+
+1. Откройте `GET /phones` и возьмите UUID устройств.
+2. Вызовите `POST /phones/batch-start` с массивом из 100 `phone_ids` и заголовком `Idempotency-Key: demo-start-001`.
+3. Откройте `GET /jobs/{job_id}` и проверьте `succeeded` по каждому item.
+4. Проверьте `GET /phones?status_filter=running`.
+5. Вызовите `POST /phones/connection-info` для получения mock IP, порта и ticket.
+6. Вызовите `POST /phones/batch-stop` с новым idempotency key.
+
+## Важно
+
+Mock-сервис не подключается к реальным телефонам и не выполняет настоящий ADB. Он проверяет Control Layer, batch-логику, контракты, статусы и обработку jobs. Перед Alibaba Cloud нужно добавить persistence jobs в PostgreSQL, настоящий worker fan-out и интеграционные тесты с sandbox API провайдера.
+
+## Следующий этап
+
+После регистрации Alibaba Cloud фиксируем API версии, регион, лимиты, lifecycle endpoints, connection info и способ ADB-доступа, затем реализуем `AlibabaAdapter` без изменения внешнего API.

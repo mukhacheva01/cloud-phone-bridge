@@ -20,3 +20,25 @@ class PhoneIdsRequest(BaseModel):
 class JobAccepted(BaseModel):
     job_id: UUID
     status: JobStatus = JobStatus.queued
+
+
+class Phone(BaseModel):
+    phone_id: UUID
+    vendor: str
+    vendor_id: str
+    status: str
+    adb_status: str
+    tags: list[str]
+    updated_at: str
+
+
+class ConnectionInfoRequest(PhoneIdsRequest):
+    pass
+
+
+class ConnectionInfo(BaseModel):
+    phone_id: UUID
+    access_host: str
+    access_port: int
+    ticket: str
+    expires_at: str

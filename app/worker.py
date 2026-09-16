@@ -3,6 +3,7 @@ from uuid import UUID
 from celery import Celery
 
 from app.config import get_settings
+from app.store import store
 
 settings = get_settings()
 celery_app = Celery("cloud_phone_bridge", broker=settings.redis_url, backend=settings.redis_url)
@@ -20,28 +21,9 @@ celery_app.conf.update(
     retry_jitter=True,
     max_retries=5,
 )
-def execute_phone_operation(
-    job_id: str,
-    operation: str,
-    phone_ids: list[str],
-    idempotency_key: str,
-) -> dict[str, object]:
-    # TODO: resolve phones, group by vendor, chunk calls and persist per-item results.
-    return {
-        "job_id": job_id,
-        "operation": operation,
-        "phone_ids": phone_ids,
-        "idempotency_key": idempotency_key,
-        "status": "queued",
-    }
+def execute_phone_operation(job_id: str) -> dict[str, object]:
+    return store.apply_operation(UUID(job_id))
 
 
-def enqueue_phone_operation(
-    job_id: UUID,
-    operation: str,
-    phone_ids: list[UUID],
-    idempotency_key: str,
-) -> None:
-    execute_phone_operation.delay(
-        str(job_id), operation, [str(phone_id) for phone_id in phone_ids], idempotency_key
-    )
+def enqueue_phone_operation(job_id: UUID) -> None:
+    execute_phone_operation.delay(str(job_id))

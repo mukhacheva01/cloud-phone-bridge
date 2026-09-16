@@ -54,3 +54,12 @@ Vendor A  Vendor B  ADB Manager
 ## Статус
 
 Проект находится на этапе спецификации. Следующий шаг: выбрать стек, провайдеров первой версии и зафиксировать реальные ограничения их API.
+
+## Локальный запуск
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+После запуска: API `http://localhost:8000`, Swagger UI `http://localhost:8000/docs`, healthcheck `http://localhost:8000/health`. Стек каркаса: FastAPI, PostgreSQL 16, Redis 7 и Celery worker.
